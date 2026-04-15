@@ -1,50 +1,88 @@
-# Welcome to your Expo app 👋
+# Ravintoaly (Food Scan App)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Ravintoaly on Expo/React Native -sovellus, jolla voit skannata tuotteita, analysoida ravintoarvoja ja seurata paivittaista etenemista.
 
-## Get started
+## Ominaisuudet
 
-1. Install dependencies
+- OCR-skannaus kameralla (Google Vision API)
+- AI-pohjainen analyysi backendin kautta
+- Paivakirja kaloreille ja makroille
+- Terveysprofiili (paino, pituus, tavoite, BMI)
+- Kalenteri paivittaiselle seurannalle
+- Viikkoraportit ja analyysien suodatus
 
-   ```bash
-   npm install
-   ```
+## Teknologiat
 
-2. Start the app
+- Expo + React Native
+- TypeScript
+- Expo Router
+- React Native Vision Camera
 
-   ```bash
-   npx expo start
-   ```
+## Kaynnistys lokaalisti
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+1. Asenna riippuvuudet:
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Luo oma ymparistotiedosto:
 
-## Learn more
+```bash
+copy .env.example .env
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+3. Tayta `.env`:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```env
+EXPO_PUBLIC_BACKEND_URL=https://foodscanbackend.food
+EXPO_PUBLIC_GOOGLE_VISION_API_KEY=your_google_vision_api_key_here
+```
 
-## Join the community
+4. Kaynnista sovellus:
 
-Join our community of developers creating universal apps.
+```bash
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Huom: Kameraominaisuudet vaativat dev buildin (eivat toimi taydellisesti Expo Go:ssa).
+
+## Kuvakaappaukset
+
+![Kamera](docs/screenshots/01-kamera.png)
+*Kamera-nakyma OCR-skannaukseen. Jos kaytat Expo Go:ta, sovellus ohjaa dev buildin kayttoon kameraa varten.*
+
+![Tavoite](docs/screenshots/02-tavoite.png)
+*Tavoitteen asetus: valittu tavoite, tavoitepaino ja aikajanne.*
+
+![Treeni ja BMI](docs/screenshots/03-treeni-bmi.png)
+*Treeniaktiivisuus, intensiteetti ja BMI-visualisointi samassa nakymassa.*
+
+![Terveysprofiili](docs/screenshots/04-terveysprofiili.png)
+*Terveysprofiilin perustiedot: paino, pituus, sukupuoli ja ikahaarukka.*
+
+![Kalenteri - kuukausi](docs/screenshots/05-kalenteri-kuukausi.png)
+*Kalenterin kuukausinakyma paivakohtaiseen seurantaan.*
+
+![Kalenteri - yhteenveto](docs/screenshots/06-kalenteri-yhteenvedot.png)
+*Kalenterin yhteenvetokortit: kalorit, makrot, tavoitekalorit ja painon kehitys.*
+
+![Paivakirja - makrot](docs/screenshots/07-paivakirja-makrot.png)
+*Paivakirjan paivanakyma: kalorit ja makrojen seuranta.*
+
+![Paivakirja - lisaykset](docs/screenshots/08-paivakirja-lisaykset.png)
+*Nopeat toiminnot paivan merkintoihin: paino, manuaalinen lisays, analyysit ja reseptit.*
+
+![Analyysit](docs/screenshots/09-analyysit-viikkoraportti.png)
+*Analyysit-vaihtilehti: viikkoraportit, haku, suodatus ja profiilianalyysit.*
+
+## Turvallisuus
+
+- Aitoja avaimia ei tallenneta git-repoon.
+- `.env` on ignoroitu gitissa.
+- Julkiseen repoon kuuluu vain `.env.example`.
+
+## Lisadokumentaatio
+
+- [GitHub + API-ohjeet](GITHUB_OHJEET.md)
+- [Backend-ohje annosvarmennukseen](BACKEND_AI_KUVA_VARMISTETAAN_ANNOS_OHJE.md)

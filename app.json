@@ -1,25 +1,46 @@
 {
   "expo": {
-    "name": "food-scan-app",
+    "owner": "codevallu2",
+    "name": "Ravintoäly",
     "slug": "food-scan-app",
-    "version": "1.0.0",
+    "version": "2.7.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "foodscanapp",
     "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/intro.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.foodscanapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSExceptionDomains": {
+            "65.21.178.60": {
+              "NSIncludesSubdomains": false,
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
+      }
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      "icon": "./assets/images/icon.png",
+      "edgeToEdgeEnabled": false,
+      "navigationBar": {
+        "backgroundColor": "#20252f",
+        "barStyle": "light-content"
       },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "usesCleartextTraffic": true,
+      "package": "com.anonymous.foodscanapp",
+      "versionCode": 3
     },
     "web": {
       "output": "static",
@@ -27,22 +48,18 @@
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
-        }
-      ]
+      "expo-notifications",
+      "react-native-vision-camera"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3e7d53e0-1c8d-490a-8eb8-529dae80c658"
+      }
     }
   }
 }
