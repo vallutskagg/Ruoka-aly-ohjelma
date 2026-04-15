@@ -49,31 +49,31 @@ Huom: Kameraominaisuudet vaativat dev buildin (eivat toimi taydellisesti Expo Go
 
 ## Kuvakaappaukset
 
-![Kamera](docs/screenshots/01-kamera.png)
+<img src="docs/screenshots/01-kamera.png" alt="Kamera" width="320" />
 *Kamera-nakyma OCR-skannaukseen. Jos kaytat Expo Go:ta, sovellus ohjaa dev buildin kayttoon kameraa varten.*
 
-![Tavoite](docs/screenshots/02-tavoite.png)
+<img src="docs/screenshots/02-tavoite.png" alt="Tavoite" width="320" />
 *Tavoitteen asetus: valittu tavoite, tavoitepaino ja aikajanne.*
 
-![Treeni ja BMI](docs/screenshots/03-treeni-bmi.png)
+<img src="docs/screenshots/03-treeni-bmi.png" alt="Treeni ja BMI" width="320" />
 *Treeniaktiivisuus, intensiteetti ja BMI-visualisointi samassa nakymassa.*
 
-![Terveysprofiili](docs/screenshots/04-terveysprofiili.png)
+<img src="docs/screenshots/04-terveysprofiili.png" alt="Terveysprofiili" width="320" />
 *Terveysprofiilin perustiedot: paino, pituus, sukupuoli ja ikahaarukka.*
 
-![Kalenteri - kuukausi](docs/screenshots/05-kalenteri-kuukausi.png)
+<img src="docs/screenshots/05-kalenteri-kuukausi.png" alt="Kalenteri - kuukausi" width="320" />
 *Kalenterin kuukausinakyma paivakohtaiseen seurantaan.*
 
-![Kalenteri - yhteenveto](docs/screenshots/06-kalenteri-yhteenvedot.png)
+<img src="docs/screenshots/06-kalenteri-yhteenvedot.png" alt="Kalenteri - yhteenveto" width="320" />
 *Kalenterin yhteenvetokortit: kalorit, makrot, tavoitekalorit ja painon kehitys.*
 
-![Paivakirja - makrot](docs/screenshots/07-paivakirja-makrot.png)
+<img src="docs/screenshots/07-paivakirja-makrot.png" alt="Paivakirja - makrot" width="320" />
 *Paivakirjan paivanakyma: kalorit ja makrojen seuranta.*
 
-![Paivakirja - lisaykset](docs/screenshots/08-paivakirja-lisaykset.png)
+<img src="docs/screenshots/08-paivakirja-lisaykset.png" alt="Paivakirja - lisaykset" width="320" />
 *Nopeat toiminnot paivan merkintoihin: paino, manuaalinen lisays, analyysit ja reseptit.*
 
-![Analyysit](docs/screenshots/09-analyysit-viikkoraportti.png)
+<img src="docs/screenshots/09-analyysit-viikkoraportti.png" alt="Analyysit" width="320" />
 *Analyysit-vaihtilehti: viikkoraportit, haku, suodatus ja profiilianalyysit.*
 
 ## Turvallisuus
