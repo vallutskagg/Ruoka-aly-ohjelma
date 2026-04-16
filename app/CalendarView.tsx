@@ -617,14 +617,14 @@ export default function CalendarView({
       0
     );
 
-    let dotColor = "#4ade80"; // oletus: vihreä
+    let dotColor = PASTEL_GREEN; // oletus: vihreä
 
     if (useProfile && dailyTarget && profile?.goal) {
       if (profile.goal === "laihdutus" && dayTotal > dailyTarget) {
-        dotColor = "#ef4444"; // punainen jos ylittää tavoitteen laihdutuksessa
+        dotColor = PASTEL_RED; // punainen jos ylittää tavoitteen laihdutuksessa
       }
       if (profile.goal === "lihasmassa" && dayTotal < dailyTarget) {
-        dotColor = "#ef4444"; // punainen jos alittaa tavoitteen lihasmassassa
+        dotColor = PASTEL_RED; // punainen jos alittaa tavoitteen lihasmassassa
       }
     }
 
@@ -823,6 +823,54 @@ export default function CalendarView({
     : 0;
   const selectedDayCalorieDelta =
     dailyTarget !== null ? Math.round(dailyTarget - selectedDayCalories) : null;
+  const isSelectedDateInPast = !!selectedDate && selectedDate < todayDate;
+  const isSelectedDayCaloriesOverTarget =
+    dailyTarget !== null ? selectedDayCalories > dailyTarget : false;
+  const selectedDayCalorieStatusColor =
+    !isSelectedDateInPast || selectedDayCalorieDelta === null
+      ? DIARY_TEXT_PRIMARY
+      : isSelectedDayCaloriesOverTarget
+        ? PASTEL_RED
+        : PASTEL_GREEN;
+  const selectedDayMacroStatus = dailyMacroTargets
+    ? [
+        {
+          key: "protein",
+          label: "🍗 Proteiini",
+          value: selectedDayMacros.protein,
+          target: dailyMacroTargets.protein,
+          ringColor: "#fca5a5",
+        },
+        {
+          key: "fat",
+          label: "🥑 Rasvat",
+          value: selectedDayMacros.fat,
+          target: dailyMacroTargets.fat,
+          ringColor: "#fde68a",
+        },
+        {
+          key: "carbs",
+          label: "🍞 Hiilarit",
+          value: selectedDayMacros.carbs,
+          target: dailyMacroTargets.carbs,
+          ringColor: "#86efac",
+        },
+        {
+          key: "sugar",
+          label: "🍬 Sokeri",
+          value: selectedDayMacros.sugar,
+          target: dailyMacroTargets.sugar,
+          ringColor: "#fdba74",
+        },
+      ].map((macro) => ({
+        ...macro,
+        valueColor: !isSelectedDateInPast
+          ? DIARY_TEXT_PRIMARY
+          : macro.target > 0 && macro.value > macro.target
+            ? PASTEL_RED
+            : PASTEL_GREEN,
+      }))
+    : [];
   const weightLog = Object.values(calendar)
     .map((day) => day.weightEntry)
     .filter((entry): entry is WeightEntry => !!entry && Number.isFinite(entry.weight))
@@ -1072,12 +1120,12 @@ export default function CalendarView({
     textSectionTitleColor: "#9ca3af",
     selectedDayBackgroundColor: "#4b5563",
     selectedDayTextColor: "#ffffff",
-    todayTextColor: "#4ade80",
+    todayTextColor: PASTEL_GREEN,
     dayTextColor: "#ffffff",
     textDisabledColor: "#4b5563",
     monthTextColor: "#ffffff",
     textMonthFontWeight: "bold" as const,
-    dotColor: "#4ade80",
+    dotColor: PASTEL_GREEN,
     selectedDotColor: "#ffffff",
     arrowColor: "#d1d5db",
   };
@@ -1142,7 +1190,7 @@ export default function CalendarView({
                         ? "Kcal huomenna"
                       : `Kcal ${selectedDate}`}
                 </Text>
-                <Text style={styles.kcalHeroValue}>
+                <Text style={[styles.kcalHeroValue, { color: selectedDayCalorieStatusColor }]}>
                   {Math.round(selectedDayCalories).toLocaleString()} kcal
                 </Text>
                 <Text style={styles.kcalHeroSubText}>
@@ -1161,11 +1209,14 @@ export default function CalendarView({
                 >
                   <Ionicons name="chevron-back" size={20} color="#ffffff" />
                 </Pressable>
-                <View style={styles.datePickerButton}>
+                <Pressable
+                  style={styles.datePickerButton}
+                  onPress={() => setShowDatePicker(true)}
+                >
                   <Ionicons name="calendar-outline" size={18} color="#e5e7eb" />
                   <Text style={styles.datePickerPrimaryText}>{formatDateLabel(selectedDate)}</Text>
                   <Text style={styles.datePickerSecondaryText}>{selectedDate}</Text>
-                </View>
+                </Pressable>
                 <Pressable
                   style={styles.dateNavArrow}
                   onPress={() => selectDate(shiftIsoDate(selectedDate, 1))}
@@ -1178,15 +1229,12 @@ export default function CalendarView({
                 <View style={styles.macroTileCard}>
                   <Text style={styles.diaryTileTitle}>Makrot</Text>
                   <View style={styles.macroCircleGrid}>
-                    {[
-                      { key: "protein", label: "🍗 Proteiini", value: selectedDayMacros.protein, target: dailyMacroTargets.protein, color: "#fca5a5" },
-                      { key: "fat", label: "🥑 Rasvat", value: selectedDayMacros.fat, target: dailyMacroTargets.fat, color: "#fde68a" },
-                      { key: "carbs", label: "🍞 Hiilarit", value: selectedDayMacros.carbs, target: dailyMacroTargets.carbs, color: "#86efac" },
-                      { key: "sugar", label: "🍬 Sokeri", value: selectedDayMacros.sugar, target: dailyMacroTargets.sugar, color: "#fdba74" },
-                    ].map((item) => (
+                    {selectedDayMacroStatus.map((item) => (
                       <View key={item.key} style={styles.macroCircleItem}>
-                        <View style={[styles.macroCircleRing, { borderColor: item.color }]}>
-                          <Text style={styles.macroCircleValue}>{Math.round(item.value)}</Text>
+                        <View style={[styles.macroCircleRing, { borderColor: item.ringColor }]}>
+                          <Text style={[styles.macroCircleValue, { color: item.valueColor }]}>
+                            {Math.round(item.value)}
+                          </Text>
                           <Text style={styles.macroCircleTarget}>/{item.target}g</Text>
                         </View>
                         <Text style={styles.macroCircleLabel}>{item.label}</Text>
@@ -1413,7 +1461,7 @@ export default function CalendarView({
                             {
                               width: `${Math.min(carbsRatio * 100, 100)}%`,
                               backgroundColor:
-                                carbsRatio > 1 ? "#ef4444" : "#4ade80",
+                                carbsRatio > 1 ? PASTEL_RED : PASTEL_GREEN,
                             },
                           ]}
                         />
@@ -1445,7 +1493,7 @@ export default function CalendarView({
                             {
                               width: `${Math.min(sugarRatio * 100, 100)}%`,
                               backgroundColor:
-                                sugarRatio > 1 ? "#ef4444" : "#4ade80",
+                                sugarRatio > 1 ? PASTEL_RED : PASTEL_GREEN,
                             },
                           ]}
                         />
@@ -1477,7 +1525,7 @@ export default function CalendarView({
                             {
                               width: `${Math.min(proteinRatio * 100, 100)}%`,
                               backgroundColor:
-                                proteinRatio > 1 ? "#ef4444" : "#4ade80",
+                                proteinRatio > 1 ? PASTEL_RED : PASTEL_GREEN,
                             },
                           ]}
                         />
@@ -1509,7 +1557,7 @@ export default function CalendarView({
                             {
                               width: `${Math.min(fatRatio * 100, 100)}%`,
                               backgroundColor:
-                                fatRatio > 1 ? "#ef4444" : "#4ade80",
+                                fatRatio > 1 ? PASTEL_RED : PASTEL_GREEN,
                             },
                           ]}
                         />
@@ -1574,14 +1622,14 @@ export default function CalendarView({
                           styles.progressFill, 
                           { 
                             width: `${Math.min((todayCalories / dailyTarget) * 100, 100)}%`,
-                            backgroundColor: todayCalories > dailyTarget ? "#ef4444" : "#4ade80"
+                            backgroundColor: todayCalories > dailyTarget ? PASTEL_RED : PASTEL_GREEN
                           }
                         ]} 
                       />
                     </View>
                     <Text style={[
                       styles.remainingText,
-                      { color: todayCalories > dailyTarget ? "#ef4444" : "#4ade80" }
+                      { color: todayCalories > dailyTarget ? PASTEL_RED : PASTEL_GREEN }
                     ]}>
                       {todayCalories > dailyTarget 
                         ? `+${(todayCalories - dailyTarget).toLocaleString()} kcal yli` 
@@ -1890,7 +1938,7 @@ export default function CalendarView({
               theme={calendarTheme}
             />
             <Pressable
-              style={[styles.copyActionButton, styles.copyCancelButton]}
+              style={[styles.copyActionButton, styles.copwyCancelButton]}
               onPress={() => setShowDatePicker(false)}
             >
               <Text style={styles.copyActionText}>Sulje</Text>
@@ -1955,7 +2003,7 @@ export default function CalendarView({
               textSectionTitleColor: DIARY_TEXT_MUTED,
               selectedDayBackgroundColor: "#2d5a3d",
               selectedDayTextColor: "#ffffff",
-              todayTextColor: "#4ade80",
+              todayTextColor: PASTEL_GREEN,
               dayTextColor: "#ffffff",
               textDisabledColor: "#4b5563",
               monthTextColor: "#ffffff",
@@ -2157,6 +2205,8 @@ const DIARY_TILE_COLOR = "#333";
 const DIARY_TEXT_PRIMARY = "#ffffff";
 const DIARY_TEXT_MUTED = "#9ca3af";
 const DIARY_BORDER_COLOR = "#3a3a3a";
+const PASTEL_GREEN = "#86efac";
+const PASTEL_RED = "#fca5a5";
 const NAV_BAR_COLOR = "#2d3137";
 const NAV_BORDER_COLOR = "#3f4652";
 
@@ -2422,10 +2472,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   macroValueOk: {
-    color: "#4ade80",
+    color: PASTEL_GREEN,
   },
   macroValueOver: {
-    color: "#ef4444",
+    color: PASTEL_RED,
   },
   entriesList: {
     maxHeight: 180,
