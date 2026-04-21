@@ -2133,7 +2133,8 @@ export default function CalendarView({
                     {typeof analysis.totalCalories === "number" && (
                       <Text style={styles.analysisPickerMeta}>
                         {Math.round(analysis.totalCalories)} kcal{" "}
-                        {analysis.analysisSource === "image"
+                        {analysis.analysisSource === "image" ||
+                        analysis.analysisSource === "text"
                           ? "/ annos"
                           : "/ 100 g"}
                       </Text>
@@ -2180,7 +2181,10 @@ export default function CalendarView({
         visible={showAddFromAnalysisModal}
         analysis={selectedAnalysisForAdd}
         preselectedDate={selectedDate}
-        isImageAnalysis={selectedAnalysisForAdd?.analysisSource === "image"}
+        isImageAnalysis={
+          selectedAnalysisForAdd?.analysisSource === "image" ||
+          selectedAnalysisForAdd?.analysisSource === "text"
+        }
         onClose={() => {
           setShowAddFromAnalysisModal(false);
           setSelectedAnalysisForAdd(null);

@@ -40,6 +40,15 @@ import { getActivityFactor } from "./utils/activity";
 type NotificationsModule = typeof import("expo-notifications");
 type NotificationRequest = import("expo-notifications").NotificationRequest;
 type VisionCameraModule = typeof import("react-native-vision-camera");
+type AnalyzeApiResponse = {
+  result?: unknown;
+  products?: unknown;
+  totalCalories?: unknown;
+  suggestedName?: unknown;
+  error?: unknown;
+  details?: unknown;
+};
+type AnalyzeResultSource = "ocr" | "image" | "text";
 
 const IS_EXPO_GO = Constants.executionEnvironment === "storeClient";
 let Notifications: NotificationsModule | null = null;
@@ -134,7 +143,7 @@ export default function App() {
     CalendarProduct[]
   >([]);
   const [analysisCalories, setAnalysisCalories] = useState<number | null>(null);
-  const [analysisSource, setAnalysisSource] = useState<"ocr" | "image" | null>(null);
+  const [analysisSource, setAnalysisSource] = useState<AnalyzeResultSource | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
   const [analysisName, setAnalysisName] = useState("");
   const [suggestedName, setSuggestedName] = useState("");
@@ -1393,6 +1402,187 @@ Säännöt:
   }, [weeklyReportsEnabled, profile.startDate, profile.endDate, profile.goal, profile.showProfile]);
 
   // OCR & Analysis
+  const ANALYZE_TIMEOUT_MS = 30_000;
+  const ANALYZE_MAX_ATTEMPTS = 2;
+  const ANALYZE_RETRY_DELAY_MS = 900;
+  const ANALYZE_MAX_JSON_BYTES = 25 * 1024 * 1024;
+
+  const delay = (ms: number) =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  const normalizeImageBase64 = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    const dataUrlMatch = trimmed.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
+    return (dataUrlMatch?.[1] ?? trimmed).trim();
+  };
+
+  const isPortionBasedSource = (source: AnalyzeResultSource | null | undefined) =>
+    source === "image" || source === "text";
+
+  const toNonEmptyString = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const toNullableNumber = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const stringifyUnknown = (value: unknown) => {
+    if (value == null) return "";
+    if (typeof value === "string") return value.trim();
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const parseAnalyzeApiResponse = (responseText: string): AnalyzeApiResponse => {
+    if (!responseText) return {};
+    try {
+      return JSON.parse(responseText) as AnalyzeApiResponse;
+    } catch {
+      return {};
+    }
+  };
+
+  const getAnalyzeErrorDetails = (payload: AnalyzeApiResponse, responseText: string) => {
+    const error = stringifyUnknown(payload.error);
+    const details = stringifyUnknown(payload.details);
+    const parts = [error, details].filter(Boolean);
+    if (parts.length > 0) return parts.join(" | ");
+
+    const fallback = responseText.trim();
+    if (!fallback) return "Tuntematon virhe";
+    return fallback.slice(0, 300);
+  };
+
+  const isAbortLikeError = (error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    if (error.name === "AbortError") return true;
+    return /abort/i.test(error.message);
+  };
+
+  const callAnalyzeEndpoint = async (
+    requestBody: Record<string, unknown>,
+    source: "OCR" | "Image" | "Text"
+  ): Promise<AnalyzeApiResponse> => {
+    const requestBodyJson = JSON.stringify(requestBody);
+    if (requestBodyJson.length > ANALYZE_MAX_JSON_BYTES) {
+      throw new Error(
+        "Kuva on liian suuri analyysiin (yli 25MB). Ota uusi kuva pienemmalla laadulla."
+      );
+    }
+
+    for (let attempt = 1; attempt <= ANALYZE_MAX_ATTEMPTS; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
+
+      try {
+        const backendResponse = await fetch(BACKEND_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBodyJson,
+          signal: controller.signal,
+        });
+
+        const responseText = await backendResponse.text();
+        const payload = parseAnalyzeApiResponse(responseText);
+
+        if (backendResponse.ok) {
+          return payload;
+        }
+
+        const errorDetails = getAnalyzeErrorDetails(payload, responseText);
+        console.error(`[FoodScan] ${source} backend fetch failed:`, {
+          url: BACKEND_URL,
+          attempt,
+          status: backendResponse.status,
+          error: stringifyUnknown(payload.error),
+          details: stringifyUnknown(payload.details),
+          body: responseText.slice(0, 400),
+        });
+
+        const isRetryableStatus =
+          backendResponse.status >= 500 && backendResponse.status < 600;
+        if (isRetryableStatus && attempt < ANALYZE_MAX_ATTEMPTS) {
+          await delay(ANALYZE_RETRY_DELAY_MS);
+          continue;
+        }
+
+        throw new Error(`Backend ${backendResponse.status}: ${errorDetails}`);
+      } catch (error) {
+        if (isAbortLikeError(error)) {
+          throw new Error("Analyysi aikakatkaistiin (30 s). Yrita uudelleen.");
+        }
+
+        if (error instanceof Error && error.message.startsWith("Backend ")) {
+          throw error;
+        }
+
+        console.error(`[FoodScan] ${source} backend request failed:`, {
+          url: BACKEND_URL,
+          attempt,
+          message: getErrorMessage(error),
+        });
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    throw new Error("Analyysi epaonnistui.");
+  };
+
+  const applyAnalyzeResult = (
+    backendData: AnalyzeApiResponse,
+    source: AnalyzeResultSource
+  ) => {
+    const resultText = toNonEmptyString(backendData.result) ?? "Ei analyysia";
+    setAnalysisText(resultText);
+
+    let products = Array.isArray(backendData.products)
+      ? (backendData.products as CalendarProduct[])
+      : [];
+    let calories = toNullableNumber(backendData.totalCalories);
+
+    const responseSuggestedName = toNonEmptyString(backendData.suggestedName);
+    if (responseSuggestedName) {
+      setSuggestedName(responseSuggestedName);
+    } else if (products.length === 1 && toNonEmptyString(products[0]?.name)) {
+      setSuggestedName(String(products[0].name));
+    } else {
+      setSuggestedName("");
+    }
+
+    if (calories === null && resultText) {
+      const match = resultText.match(/(\d+)\s*kcal/i);
+      if (match) {
+        calories = parseInt(match[1], 10);
+        if (!products.length) {
+          products = [{ name: "Tuote", calories }];
+        }
+      }
+    }
+
+    setAnalysisProducts(products);
+    setAnalysisCalories(calories);
+    setAnalysisSource(source);
+    setIsFromSaved(false);
+    setAddedToCalendar(false);
+    setAddedToIngredients(false);
+  };
+
   const performOCRAndAnalysis = async (
     photoUri: string,
     options?: {
@@ -1406,60 +1596,90 @@ Säännöt:
     try {
       setIsLoading(true);
 
-      if (!GOOGLE_VISION_API_KEY) {
-        throw new Error(
-          "EXPO_PUBLIC_GOOGLE_VISION_API_KEY puuttuu. Lisaa se .env-tiedostoon ennen OCR-skannausta."
+      const rawBase64 = await FileSystem.readAsStringAsync(photoUri, {
+        encoding: "base64",
+      });
+      const imageBase64 = normalizeImageBase64(rawBase64);
+      if (!imageBase64) {
+        throw new Error("Kuva puuttuu tai base64 muodostus epaonnistui.");
+      }
+
+      const hasVisionKey = Boolean(GOOGLE_VISION_API_KEY);
+      console.log(`[FoodScan] Vision key configured: ${hasVisionKey}`);
+      console.log(
+        `[FoodScan] OCR flow imageBase64 length before request: ${imageBase64.length}`
+      );
+
+      let ocrText = "";
+      if (hasVisionKey) {
+        const ocrUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
+        try {
+          const ocrResponse = await fetch(ocrUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              requests: [
+                {
+                  image: { content: imageBase64 },
+                  features: [{ type: "TEXT_DETECTION" }],
+                },
+              ],
+            }),
+          });
+
+          if (!ocrResponse.ok) {
+            const responseText = await ocrResponse.text();
+            console.error("[FoodScan] OCR fetch failed:", {
+              url: ocrUrl,
+              status: ocrResponse.status,
+              body: responseText.slice(0, 300),
+            });
+            throw new Error(`OCR ${ocrResponse.status}: ${responseText.slice(0, 300)}`);
+          }
+
+          const ocrData = await ocrResponse.json();
+          ocrText = String(
+            ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
+              ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
+              ""
+          ).trim();
+        } catch (error) {
+          console.error(
+            "[FoodScan] OCR failed, falling back to imageBase64 analyze:",
+            getErrorMessage(error)
+          );
+        }
+      } else {
+        console.warn(
+          "[FoodScan] EXPO_PUBLIC_GOOGLE_VISION_API_KEY puuttuu, jatketaan imageBase64-polulla."
         );
       }
 
-      const base64 = await FileSystem.readAsStringAsync(photoUri, {
-        encoding: "base64",
-      });
-
-      const ocrUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
-      let ocrResponse: Response;
-      try {
-        ocrResponse = await fetch(ocrUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            requests: [
-              {
-                image: { content: base64 },
-                features: [{ type: "TEXT_DETECTION" }],
-              },
-            ],
-          }),
-        });
-      } catch (error) {
-        console.error("[FoodScan] OCR fetch failed:", {
-          url: ocrUrl,
-          message: getErrorMessage(error),
-        });
-        throw error;
+      const shouldUseOcrText = ocrText.length > 0;
+      if (!shouldUseOcrText) {
+        console.log("[FoodScan] OCR text missing, using imageBase64 fallback payload.");
       }
 
-      if (!ocrResponse.ok) {
-        const responseText = await ocrResponse.text();
-        console.error("[FoodScan] OCR fetch failed:", {
-          url: ocrUrl,
-          status: ocrResponse.status,
-          body: responseText.slice(0, 300),
-        });
-        throw new Error(`OCR ${ocrResponse.status}: ${responseText.slice(0, 300)}`);
-      }
+      const userMealDescription = options?.mealDescription?.trim();
+      const requestBody: Record<string, unknown> = shouldUseOcrText
+        ? { ocrText }
+        : {
+            imageBase64,
+            mealAdjustments: {
+              portionMultiplier: options?.portionMultiplier ?? 1,
+              oilAdded: options?.oilAdded ?? false,
+              servingContext: options?.servingContext ?? "home",
+              adjustmentPercent: options?.adjustmentPercent ?? 0,
+              ...(userMealDescription ? { mealDescription: userMealDescription } : {}),
+            },
+          };
 
-      const ocrData = await ocrResponse.json();
-      const text = ocrData.responses?.[0]?.fullTextAnnotation?.text || "";
-
-      const requestBody: any = { ocrText: text };
       const profileData = profile.getProfileData();
       if (profileData) {
         requestBody.profile = profileData;
       }
 
       if (options) {
-        const userMealDescription = options.mealDescription?.trim();
         requestBody.mealAdjustments = {
           portionMultiplier: options.portionMultiplier,
           oilAdded: options.oilAdded,
@@ -1472,67 +1692,18 @@ Säännöt:
         }
       }
 
-      let backendResponse: Response;
-      try {
-        backendResponse = await fetch(BACKEND_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
-      } catch (error) {
-        console.error("[FoodScan] Backend fetch failed:", {
-          url: BACKEND_URL,
-          message: getErrorMessage(error),
-        });
-        throw error;
-      }
-
-      if (!backendResponse.ok) {
-        const responseText = await backendResponse.text();
-        console.error("[FoodScan] Backend fetch failed:", {
-          url: BACKEND_URL,
-          status: backendResponse.status,
-          body: responseText.slice(0, 300),
-        });
-        throw new Error(
-          `Backend ${backendResponse.status}: ${responseText.slice(0, 300)}`
-        );
-      }
-
-      const backendData = await backendResponse.json();
-      setAnalysisText(backendData.result ?? "Ei analyysiä");
-      
-      // Jos backend ei lähetä products/calories, yritä parsia tekstistä
-      let products = backendData.products ?? [];
-      let calories = backendData.totalCalories ?? null;
-            // Tallenna ehdotettu nimi jos saatavilla
-      if (backendData.suggestedName) {
-        setSuggestedName(backendData.suggestedName);
-      } else if (products.length === 1) {
-        // Jos on tasan yksi tuote, ehdota sen nimeä
-        setSuggestedName(products[0].name);
-      } else {
-        setSuggestedName("");
-      }
-            if (!calories && backendData.result) {
-        // Yritä löytää kaloritieto muodosta "XXX kcal"
-        const match = backendData.result.match(/(\d+)\s*kcal/i);
-        if (match) {
-          calories = parseInt(match[1], 10);
-          // Luo placeholder-tuote
-          products = [{ name: "Tuote", calories: calories }];
-        }
-      }
-      
-      setAnalysisProducts(products);
-      setAnalysisCalories(calories);
-      setAnalysisSource("ocr");
-      setIsFromSaved(false);
-      setAddedToCalendar(false);
-      setAddedToIngredients(false);
+      const backendData = await callAnalyzeEndpoint(
+        requestBody,
+        shouldUseOcrText ? "OCR" : "Image"
+      );
+      applyAnalyzeResult(backendData, shouldUseOcrText ? "ocr" : "image");
     } catch (error) {
-      console.error("[FoodScan] OCR analysis failed:", error);
-      setAnalysisText("❌ Analyysi epäonnistui");
+      const message = getErrorMessage(error);
+      console.error("[FoodScan] OCR analysis failed:", message);
+      setAnalysisText(`❌ Analyysi epäonnistui\n${message}`);
+      setAnalysisProducts([]);
+      setAnalysisCalories(null);
+      setSuggestedName("");
       setIsFromSaved(false);
       setAddedToCalendar(false);
       setAddedToIngredients(false);
@@ -1555,89 +1726,45 @@ Säännöt:
     try {
       setIsLoading(true);
 
-      const base64 = await FileSystem.readAsStringAsync(photoUri, {
+      const rawBase64 = await FileSystem.readAsStringAsync(photoUri, {
         encoding: "base64",
       });
+      const imageBase64 = normalizeImageBase64(rawBase64);
+      if (!imageBase64) {
+        throw new Error("Kuva puuttuu tai base64 muodostus epaonnistui.");
+      }
+      console.log(
+        `[FoodScan] Image analyze imageBase64 length before request: ${imageBase64.length}`
+      );
 
-      const requestBody: any = { imageBase64: base64 };
+      const userMealDescription = options?.mealDescription?.trim();
+      const requestBody: Record<string, unknown> = {
+        imageBase64,
+        mealAdjustments: {
+          portionMultiplier: options?.portionMultiplier ?? 1,
+          oilAdded: options?.oilAdded ?? false,
+          servingContext: options?.servingContext ?? "home",
+          adjustmentPercent: options?.adjustmentPercent ?? 0,
+          ...(userMealDescription ? { mealDescription: userMealDescription } : {}),
+        },
+      };
       const profileData = profile.getProfileData();
       if (profileData) {
         requestBody.profile = profileData;
       }
-
-      if (options) {
-        const userMealDescription = options.mealDescription?.trim();
-        requestBody.mealAdjustments = {
-          portionMultiplier: options.portionMultiplier,
-          oilAdded: options.oilAdded,
-          servingContext: options.servingContext,
-          adjustmentPercent: options.adjustmentPercent,
-          ...(userMealDescription ? { mealDescription: userMealDescription } : {}),
-        };
-        if (userMealDescription) {
-          requestBody.mealDescription = userMealDescription;
-        }
+      if (userMealDescription) {
+        requestBody.mealDescription = userMealDescription;
       }
 
-      let backendResponse: Response;
-      try {
-        backendResponse = await fetch(BACKEND_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
-      } catch (error) {
-        console.error("[FoodScan] Image backend fetch failed:", {
-          url: BACKEND_URL,
-          message: getErrorMessage(error),
-        });
-        throw error;
-      }
-
-      if (!backendResponse.ok) {
-        const responseText = await backendResponse.text();
-        console.error("[FoodScan] Image backend fetch failed:", {
-          url: BACKEND_URL,
-          status: backendResponse.status,
-          body: responseText.slice(0, 300),
-        });
-        throw new Error(
-          `Backend ${backendResponse.status}: ${responseText.slice(0, 300)}`
-        );
-      }
-
-      const backendData = await backendResponse.json();
-
-      setAnalysisText(backendData.result ?? "Ei analyysiä");
-
-      let products = backendData.products ?? [];
-      let calories = backendData.totalCalories ?? null;
-
-      if (backendData.suggestedName) {
-        setSuggestedName(backendData.suggestedName);
-      } else if (products.length === 1) {
-        setSuggestedName(products[0].name);
-      } else {
-        setSuggestedName("");
-      }
-
-      if (!calories && backendData.result) {
-        const match = backendData.result.match(/(\d+)\s*kcal/i);
-        if (match) {
-          calories = parseInt(match[1], 10);
-          products = [{ name: "Tuote", calories: calories }];
-        }
-      }
-
-      setAnalysisProducts(products);
-      setAnalysisCalories(calories);
-      setAnalysisSource("image");
-      setIsFromSaved(false);
-      setAddedToCalendar(false);
-      setAddedToIngredients(false);
+      const backendData = await callAnalyzeEndpoint(requestBody, "Image");
+      applyAnalyzeResult(backendData, "image");
     } catch (error) {
-      console.error("[FoodScan] Image analysis failed:", error);
-      setAnalysisText("❌ Analyysi epäonnistui");
+      const message = getErrorMessage(error);
+      console.error("[FoodScan] Image analysis failed:", message);
+      setAnalysisText(`❌ Analyysi epäonnistui\n${message}`);
+      setAnalysisProducts([]);
+      setAnalysisCalories(null);
+      setSuggestedName("");
       setIsFromSaved(false);
       setAddedToCalendar(false);
       setAddedToIngredients(false);
@@ -1744,7 +1871,7 @@ Säännöt:
       text: analysisText,
       level: analyses.getLevelFromText(analysisText),
       favorite: false,
-      analysisSource: analysisSource === "image" ? "image" : "ocr",
+      analysisSource: analysisSource ?? "ocr",
       usedProfile: !!(profile.useProfile && profile.weight && profile.height),
       products: analysisProducts,
       totalCalories: analysisCalories ?? undefined,
@@ -1771,7 +1898,7 @@ Säännöt:
 
     if (metric === "calories") {
       const value =
-        item.analysisSource === "image" && typeof p.baseCalories === "number"
+        isPortionBasedSource(item.analysisSource) && typeof p.baseCalories === "number"
           ? p.baseCalories
           : p.calories;
       return Number.isFinite(value) ? value : null;
@@ -1886,7 +2013,7 @@ Säännöt:
   const profileAnalysesCount = filteredAnalyses.filter((a) => a.usedProfile).length;
   const favoriteAnalysesCount = filteredAnalyses.filter((a) => a.favorite).length;
   const getSavedCaloriesLabel = (item: SavedAnalysis) =>
-    item.analysisSource === "image" ? "kcal/annos" : "kcal/100g";
+    isPortionBasedSource(item.analysisSource) ? "kcal/annos" : "kcal/100g";
   const getMacroMetricFromSavedSort = (
     sort: typeof savedSort
   ): "carbs" | "sugar" | "protein" | "fat" | null => {
@@ -1921,7 +2048,7 @@ Säännöt:
         : p.baseFat;
 
     const value =
-      item.analysisSource === "image"
+      isPortionBasedSource(item.analysisSource)
         ? typeof perServingValue === "number"
           ? perServingValue
           : per100Value
@@ -1932,7 +2059,7 @@ Säännöt:
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   };
   const getMacroUnitLabel = (item: SavedAnalysis) =>
-    item.analysisSource === "image" ? "g/annos" : "g/100g";
+    isPortionBasedSource(item.analysisSource) ? "g/annos" : "g/100g";
   const getSavedSecondaryLabel = (item: SavedAnalysis) => {
     const macroMetric = getMacroMetricFromSavedSort(savedSort);
     if (macroMetric) {
@@ -3221,7 +3348,7 @@ Säännöt:
               }
             : null
         }
-        isImageAnalysis={analysisSource === "image"}
+        isImageAnalysis={isPortionBasedSource(analysisSource)}
         onClose={() => setShowCalendar(false)}
         onSaved={() => setAddedToCalendar(true)}
       />

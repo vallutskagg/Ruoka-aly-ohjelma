@@ -19,7 +19,7 @@ export type SavedAnalysis = {
   text: string;
   level: HealthLevel;
   favorite: boolean;
-  analysisSource?: "ocr" | "image";
+  analysisSource?: "ocr" | "image" | "text";
   usedProfile?: boolean;
   products?: CalendarProduct[]; // tuotteet, jotka halutaan lisätä kalenteriin (reseptissä: annos)
   totalCalories?: number; // reseptissä: kalorit per annos
