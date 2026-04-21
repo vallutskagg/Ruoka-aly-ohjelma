@@ -1613,8 +1613,9 @@ Säännöt:
       let ocrText = "";
       if (hasVisionKey) {
         const ocrUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
+        let ocrResponse: Response;
         try {
-          const ocrResponse = await fetch(ocrUrl, {
+          ocrResponse = await fetch(ocrUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1626,27 +1627,34 @@ Säännöt:
               ],
             }),
           });
-
-          if (!ocrResponse.ok) {
-            const responseText = await ocrResponse.text();
-            console.error("[FoodScan] OCR fetch failed:", {
-              url: ocrUrl,
-              status: ocrResponse.status,
-              body: responseText.slice(0, 300),
-            });
-            throw new Error(`OCR ${ocrResponse.status}: ${responseText.slice(0, 300)}`);
-          }
-
-          const ocrData = await ocrResponse.json();
-          ocrText = String(
-            ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
-              ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
-              ""
-          ).trim();
         } catch (error) {
-          console.error(
-            "[FoodScan] OCR failed, falling back to imageBase64 analyze:",
-            getErrorMessage(error)
+          console.error("[FoodScan] OCR fetch failed:", {
+            url: ocrUrl,
+            message: getErrorMessage(error),
+          });
+          throw new Error(`OCR-pyynto epaonnistui: ${getErrorMessage(error)}`);
+        }
+
+        if (!ocrResponse.ok) {
+          const responseText = await ocrResponse.text();
+          console.error("[FoodScan] OCR fetch failed:", {
+            url: ocrUrl,
+            status: ocrResponse.status,
+            body: responseText.slice(0, 300),
+          });
+          throw new Error(`OCR ${ocrResponse.status}: ${responseText.slice(0, 300)}`);
+        }
+
+        const ocrData = await ocrResponse.json();
+        ocrText = String(
+          ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
+            ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
+            ""
+        ).trim();
+
+        if (!ocrText) {
+          throw new Error(
+            "OCR ei loytanyt tekstia kuvasta. Ota tarkempi kuva pakkauksen ravintosisallosta."
           );
         }
       } else {
@@ -1679,7 +1687,7 @@ Säännöt:
         requestBody.profile = profileData;
       }
 
-      if (options) {
+      if (!shouldUseOcrText && options) {
         requestBody.mealAdjustments = {
           portionMultiplier: options.portionMultiplier,
           oilAdded: options.oilAdded,
