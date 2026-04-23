@@ -1402,7 +1402,7 @@ Säännöt:
   }, [weeklyReportsEnabled, profile.startDate, profile.endDate, profile.goal, profile.showProfile]);
 
   // OCR & Analysis
-  const ANALYZE_TIMEOUT_MS = 30_000;
+  const ANALYZE_TIMEOUT_MS = 60_000;
   const ANALYZE_MAX_ATTEMPTS = 2;
   const ANALYZE_RETRY_DELAY_MS = 900;
   const ANALYZE_MAX_JSON_BYTES = 25 * 1024 * 1024;
@@ -1467,10 +1467,71 @@ Säännöt:
     return fallback.slice(0, 300);
   };
 
+  const getBackendStatusFromErrorMessage = (message: string): number | null => {
+    const match = message.match(/backend\s+(\d{3})/i);
+    if (!match) return null;
+    const status = Number(match[1]);
+    return Number.isFinite(status) ? status : null;
+  };
+
   const isAbortLikeError = (error: unknown) => {
     if (!(error instanceof Error)) return false;
     if (error.name === "AbortError") return true;
     return /abort/i.test(error.message);
+  };
+
+  const getUserFriendlyAnalyzeErrorMessage = (error: unknown): string => {
+    const rawMessage = getErrorMessage(error);
+    const message = rawMessage.toLowerCase();
+    const backendStatus = getBackendStatusFromErrorMessage(rawMessage);
+
+    if (
+      isAbortLikeError(error) ||
+      message.includes("aikakatkaistiin") ||
+      message.includes("timeout")
+    ) {
+      return `Analyysi kesti liian kauan (yli ${Math.round(
+        ANALYZE_TIMEOUT_MS / 1000
+      )} s). Yritä uudelleen.`;
+    }
+
+    if (
+      message.includes("network request failed") ||
+      message.includes("failed to fetch") ||
+      message.includes("verkkoyhteys")
+    ) {
+      return "Yhteys palvelimeen epäonnistui. Tarkista verkkoyhteys ja yritä uudelleen.";
+    }
+
+    if (
+      message.includes("base64") ||
+      message.includes("kuva puuttuu") ||
+      message.includes("image is required")
+    ) {
+      return "Kuvan käsittely epäonnistui. Ota uusi kuva ja yritä uudelleen.";
+    }
+
+    if (
+      backendStatus === 413 ||
+      message.includes("liian suuri analyysiin") ||
+      message.includes("too large")
+    ) {
+      return "Kuva on liian suuri analysoitavaksi. Ota uusi kuva hieman pienemmällä laadulla.";
+    }
+
+    if (backendStatus === 429 || message.includes("rate limit")) {
+      return "Palvelu on hetkellisesti ruuhkainen. Odota hetki ja yritä uudelleen.";
+    }
+
+    if (backendStatus !== null && backendStatus >= 500) {
+      return "Palvelussa on hetkellinen häiriö. Yritä hetken päästä uudelleen.";
+    }
+
+    if (backendStatus === 400 || backendStatus === 422) {
+      return "Analyysi ei onnistunut tällä kuvalla. Kokeile tarkempaa kuvaa tai lisää lisätietoja.";
+    }
+
+    return "Analyysi epäonnistui. Yritä uudelleen.";
   };
 
   const callAnalyzeEndpoint = async (
@@ -1480,7 +1541,7 @@ Säännöt:
     const requestBodyJson = JSON.stringify(requestBody);
     if (requestBodyJson.length > ANALYZE_MAX_JSON_BYTES) {
       throw new Error(
-        "Kuva on liian suuri analyysiin (yli 25MB). Ota uusi kuva pienemmalla laadulla."
+        "Kuva on liian suuri analyysiin (yli 25MB). Ota uusi kuva pienemmällä laadulla."
       );
     }
 
@@ -1523,7 +1584,9 @@ Säännöt:
         throw new Error(`Backend ${backendResponse.status}: ${errorDetails}`);
       } catch (error) {
         if (isAbortLikeError(error)) {
-          throw new Error("Analyysi aikakatkaistiin (30 s). Yrita uudelleen.");
+          throw new Error(
+            `Analyysi aikakatkaistiin (${Math.round(ANALYZE_TIMEOUT_MS / 1000)} s). Yritä uudelleen.`
+          );
         }
 
         if (error instanceof Error && error.message.startsWith("Backend ")) {
@@ -1541,7 +1604,7 @@ Säännöt:
       }
     }
 
-    throw new Error("Analyysi epaonnistui.");
+    throw new Error("Analyysi epäonnistui.");
   };
 
   const applyAnalyzeResult = (
@@ -1565,14 +1628,19 @@ Säännöt:
       setSuggestedName("");
     }
 
+    if (calories === null) {
+      calories = toNullableNumber(products[0]?.calories);
+    }
+
     if (calories === null && resultText) {
       const match = resultText.match(/(\d+)\s*kcal/i);
       if (match) {
         calories = parseInt(match[1], 10);
-        if (!products.length) {
-          products = [{ name: "Tuote", calories }];
-        }
       }
+    }
+
+    if (calories !== null && !products.length) {
+      products = [{ name: "Tuote", calories }];
     }
 
     setAnalysisProducts(products);
@@ -1601,7 +1669,7 @@ Säännöt:
       });
       const imageBase64 = normalizeImageBase64(rawBase64);
       if (!imageBase64) {
-        throw new Error("Kuva puuttuu tai base64 muodostus epaonnistui.");
+        throw new Error("Kuva puuttuu tai base64 muodostus epäonnistui.");
       }
 
       const hasVisionKey = Boolean(GOOGLE_VISION_API_KEY);
@@ -1611,11 +1679,11 @@ Säännöt:
       );
 
       let ocrText = "";
+      let visionFailureReason: string | null = null;
       if (hasVisionKey) {
         const ocrUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
-        let ocrResponse: Response;
         try {
-          ocrResponse = await fetch(ocrUrl, {
+          const ocrResponse = await fetch(ocrUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1627,52 +1695,64 @@ Säännöt:
               ],
             }),
           });
+
+          if (!ocrResponse.ok) {
+            const responseText = await ocrResponse.text();
+            visionFailureReason = `vision_http_${ocrResponse.status}`;
+            console.warn("[FoodScan] OCR fetch failed, using image fallback:", {
+              url: ocrUrl,
+              status: ocrResponse.status,
+              body: responseText.slice(0, 300),
+            });
+          } else {
+            const ocrData = await ocrResponse.json();
+            ocrText = String(
+              ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
+                ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
+                ""
+            ).trim();
+
+            if (!ocrText) {
+              visionFailureReason = "vision_empty_text";
+              console.warn(
+                "[FoodScan] OCR returned empty text, using image fallback for OCR route."
+              );
+            }
+          }
         } catch (error) {
-          console.error("[FoodScan] OCR fetch failed:", {
+          visionFailureReason = "vision_network_error";
+          console.warn("[FoodScan] OCR fetch failed, using image fallback:", {
             url: ocrUrl,
             message: getErrorMessage(error),
           });
-          throw new Error(`OCR-pyynto epaonnistui: ${getErrorMessage(error)}`);
-        }
-
-        if (!ocrResponse.ok) {
-          const responseText = await ocrResponse.text();
-          console.error("[FoodScan] OCR fetch failed:", {
-            url: ocrUrl,
-            status: ocrResponse.status,
-            body: responseText.slice(0, 300),
-          });
-          throw new Error(`OCR ${ocrResponse.status}: ${responseText.slice(0, 300)}`);
-        }
-
-        const ocrData = await ocrResponse.json();
-        ocrText = String(
-          ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
-            ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
-            ""
-        ).trim();
-
-        if (!ocrText) {
-          throw new Error(
-            "OCR ei loytanyt tekstia kuvasta. Ota tarkempi kuva pakkauksen ravintosisallosta."
-          );
         }
       } else {
         console.warn(
           "[FoodScan] EXPO_PUBLIC_GOOGLE_VISION_API_KEY puuttuu, jatketaan imageBase64-polulla."
         );
+        visionFailureReason = "vision_key_missing";
       }
 
       const shouldUseOcrText = ocrText.length > 0;
       if (!shouldUseOcrText) {
-        console.log("[FoodScan] OCR text missing, using imageBase64 fallback payload.");
+        console.log("[FoodScan] OCR text missing, using imageBase64 fallback payload.", {
+          reason: visionFailureReason ?? "unknown",
+        });
       }
 
       const userMealDescription = options?.mealDescription?.trim();
       const requestBody: Record<string, unknown> = shouldUseOcrText
-        ? { ocrText }
+        ? {
+            mode: "ocr",
+            ocrText,
+            sourceRoute: "ocr_capture",
+            ocrProvider: "vision",
+          }
         : {
+            mode: "ocr",
+            sourceRoute: "ocr_capture",
             imageBase64,
+            ocrFallbackReason: visionFailureReason ?? "vision_unavailable",
             mealAdjustments: {
               portionMultiplier: options?.portionMultiplier ?? 1,
               oilAdded: options?.oilAdded ?? false,
@@ -1700,15 +1780,15 @@ Säännöt:
         }
       }
 
-      const backendData = await callAnalyzeEndpoint(
-        requestBody,
-        shouldUseOcrText ? "OCR" : "Image"
-      );
-      applyAnalyzeResult(backendData, shouldUseOcrText ? "ocr" : "image");
+      const backendData = await callAnalyzeEndpoint(requestBody, "OCR");
+      // OCR-napin flow: kalenterissa käytetään aina g/ml-syöttöä,
+      // vaikka backendissä olisi tarvittaessa käytetty imageBase64-fallbackia.
+      applyAnalyzeResult(backendData, "ocr");
     } catch (error) {
       const message = getErrorMessage(error);
+      const userMessage = getUserFriendlyAnalyzeErrorMessage(error);
       console.error("[FoodScan] OCR analysis failed:", message);
-      setAnalysisText(`❌ Analyysi epäonnistui\n${message}`);
+      setAnalysisText(`❌ ${userMessage}`);
       setAnalysisProducts([]);
       setAnalysisCalories(null);
       setSuggestedName("");
@@ -1739,7 +1819,7 @@ Säännöt:
       });
       const imageBase64 = normalizeImageBase64(rawBase64);
       if (!imageBase64) {
-        throw new Error("Kuva puuttuu tai base64 muodostus epaonnistui.");
+        throw new Error("Kuva puuttuu tai base64 muodostus epäonnistui.");
       }
       console.log(
         `[FoodScan] Image analyze imageBase64 length before request: ${imageBase64.length}`
@@ -1768,8 +1848,9 @@ Säännöt:
       applyAnalyzeResult(backendData, "image");
     } catch (error) {
       const message = getErrorMessage(error);
+      const userMessage = getUserFriendlyAnalyzeErrorMessage(error);
       console.error("[FoodScan] Image analysis failed:", message);
-      setAnalysisText(`❌ Analyysi epäonnistui\n${message}`);
+      setAnalysisText(`❌ ${userMessage}`);
       setAnalysisProducts([]);
       setAnalysisCalories(null);
       setSuggestedName("");

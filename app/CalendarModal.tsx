@@ -1,6 +1,6 @@
 ﻿// app/CalendarModal.tsx
 import React, { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Calendar } from "react-native-calendars";
 import { SavedAnalysis } from "./Storage/Types";
 import { addAnalysisToDate } from "./Storage/calendarStorage";
@@ -14,6 +14,17 @@ type Props = {
   allowManualEntry?: boolean;
   preselectedDate?: string | null;
 };
+
+type PortionMultiplier = 0.5 | 0.7 | 1 | 1.2 | 1.4;
+
+const AI_MULTIPLIER_OPTIONS: Array<{ value: PortionMultiplier; label: string }> = [
+  { value: 0.5, label: "Pieni" },
+  { value: 0.7, label: "Keskipieni" },
+  { value: 1, label: "Normaali" },
+  { value: 1.2, label: "Keskisuuri" },
+  { value: 1.4, label: "Suuri" },
+];
+const AI_ESTIMATE_TIMEOUT_MS = 60_000;
 
 export default function CalendarModal({
   visible,
@@ -32,7 +43,7 @@ export default function CalendarModal({
   const [showAiEstimateModal, setShowAiEstimateModal] = useState(false);
   const [aiEstimateName, setAiEstimateName] = useState("");
   const [aiEstimateDetails, setAiEstimateDetails] = useState("");
-  const [aiEstimateMultiplier, setAiEstimateMultiplier] = useState<0.5 | 0.7 | 1 | 1.2 | 1.4>(1);
+  const [aiEstimateMultiplier, setAiEstimateMultiplier] = useState<PortionMultiplier>(1);
   const [isEstimatingAi, setIsEstimatingAi] = useState(false);
   const [aiEstimateError, setAiEstimateError] = useState("");
 
@@ -85,10 +96,59 @@ export default function CalendarModal({
     return null;
   };
 
+  const getUserFriendlyAiEstimateError = (error: unknown): string => {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = rawMessage.toLowerCase();
+
+    if (
+      (error instanceof Error && error.name === "AbortError") ||
+      message.includes("abort") ||
+      message.includes("timeout") ||
+      message.includes("aikakatka")
+    ) {
+      return `Arvio kesti liian kauan (yli ${Math.round(
+        AI_ESTIMATE_TIMEOUT_MS / 1000
+      )} s). Yritä uudelleen.`;
+    }
+
+    const backendStatusMatch = rawMessage.match(/backend\s+(\d{3})/i);
+    const backendStatus = backendStatusMatch ? Number(backendStatusMatch[1]) : null;
+
+    if (
+      message.includes("network request failed") ||
+      message.includes("failed to fetch") ||
+      message.includes("verkkoyhteys")
+    ) {
+      return "Yhteys palvelimeen epäonnistui. Tarkista verkkoyhteys ja yritä uudelleen.";
+    }
+
+    if (backendStatus === 429 || message.includes("rate limit")) {
+      return "Palvelu on hetkellisesti ruuhkainen. Odota hetki ja yritä uudelleen.";
+    }
+
+    if (backendStatus !== null && backendStatus >= 500) {
+      return "Palvelussa on hetkellinen häiriö. Yritä hetken päästä uudelleen.";
+    }
+
+    if (backendStatus === 400 || backendStatus === 422) {
+      return "AI ei saanut tarpeeksi tietoa luotettavaan arvioon. Lisää annoskoko tai tarkempi kuvaus.";
+    }
+
+    if (
+      message.includes("ai ei palauttanut kaloriarviota") ||
+      message.includes("unable to estimate calories reliably")
+    ) {
+      return "AI ei saanut tarpeeksi tietoa luotettavaan arvioon. Lisää annoskoko tai tarkempi kuvaus.";
+    }
+
+    return "AI-arvio epäonnistui. Yritä uudelleen.";
+  };
+
   const estimateManualCaloriesWithAi = async () => {
     const name = aiEstimateName.trim();
     const details = aiEstimateDetails.trim();
-    const portionMultiplier = aiEstimateMultiplier;
+    const targetPortionMultiplier = aiEstimateMultiplier;
+    const basePortionMultiplier: PortionMultiplier = 1;
 
     if (!name) {
       setAiEstimateError("Kirjoita tuotteen nimi.");
@@ -99,14 +159,15 @@ export default function CalendarModal({
     setIsEstimatingAi(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    const timeoutId = setTimeout(() => controller.abort(), AI_ESTIMATE_TIMEOUT_MS);
 
     try {
       const promptLines = [
         `Tuote: ${name}`,
-        `Annoskerroin: ${portionMultiplier}x`,
+        `Valittu annoskerroin: ${targetPortionMultiplier}x`,
+        "Arvioi ensin normiannoksen (1.0x) kalorit.",
         ...(details ? [`Lisatiedot: ${details}`] : []),
-        "Arvioi annoksen kalorit (kcal). Palauta tarkka tuotteen nimi ja totalCalories.",
+        "Palauta tarkka tuotteen nimi ja normiannoksen totalCalories.",
       ];
 
       type BackendRequestError = Error & { status?: number };
@@ -155,13 +216,13 @@ export default function CalendarModal({
         mode: "text_estimate",
         ocrText: promptLines.join("\n"),
         mealAdjustments: {
-          portionMultiplier,
+          portionMultiplier: basePortionMultiplier,
           oilAdded: false,
           servingContext: "home",
           adjustmentPercent: 0,
           ...(details ? { mealDescription: details } : {}),
         },
-        mealDescription: [`annoskerroin ${portionMultiplier}x`, details]
+        mealDescription: ["normiannos 1.0x", details]
           .filter((part) => part.length > 0)
           .join(". "),
         instructions: `
@@ -176,7 +237,8 @@ Ei markdownia.
         `.trim(),
         data: {
           name,
-          portionMultiplier,
+          portionMultiplier: basePortionMultiplier,
+          targetPortionMultiplier,
           details,
         },
       };
@@ -208,7 +270,7 @@ Ei markdownia.
         return (
           message.includes("unable to estimate calories reliably") ||
           message.includes("not enough detail for a reliable calorie estimate") ||
-          message.includes("epavarma")
+          message.includes("epävarma")
         );
       };
 
@@ -232,7 +294,7 @@ Ei markdownia.
               instructions: `
 Arvioi tuotteen ANNOSKALORIT tekstin perusteella.
 Jos tarkat tiedot puuttuvat, kayta realistista yhden annoksen oletusta.
-Skaalaa arvio mealAdjustments.portionMultiplier-kertoimella.
+Palauta normiannoksen (1.0x) kalorit, ala skaalaa muulla annoskertoimella.
 Palauta vain JSON:
 {
   "name": string,
@@ -241,7 +303,7 @@ Palauta vain JSON:
 }
 Saannot:
 - totalCalories on positiivinen kokonaisluku (>0)
-- anna paras arvio, vaikka epavarmuutta on
+- anna paras arvio, vaikka epävarmuutta on
 - ei markdownia
               `.trim(),
             },
@@ -258,7 +320,7 @@ Saannot:
               ...requestBodyBase,
               imageBase64: PLACEHOLDER_IMAGE_BASE64,
             },
-            `Kuvafallback (${primaryError instanceof Error ? primaryError.message : "Tekstimoodi epaonnistui"})`
+            `Kuvafallback (${primaryError instanceof Error ? primaryError.message : "Tekstimoodi epäonnistui"})`
           );
         }
       }
@@ -274,23 +336,10 @@ Saannot:
           : "") ||
         name;
 
-      const productCalories = Array.isArray(payload?.products)
-        ? payload.products
-            .map((item: any) => parsePositiveCalories(item?.calories))
-            .filter((value: number | null): value is number => value !== null)
-        : [];
-      const summedProductCalories =
-        productCalories.length > 0
-          ? productCalories.reduce((sum: number, current: number) => sum + current, 0)
-          : null;
-
       let estimatedCalories =
         parsePositiveCalories(payload?.totalCalories) ??
         parsePositiveCalories(payload?.products?.[0]?.calories) ??
-        summedProductCalories ??
-        extractCaloriesFromText(payload?.result) ??
-        extractCaloriesFromText(payload?.note) ??
-        extractCaloriesFromText(payload?.details);
+        extractCaloriesFromText(payload?.result);
 
       if (estimatedCalories === null) {
         throw new Error(
@@ -299,16 +348,17 @@ Saannot:
       }
 
       setManualName(estimatedName);
-      setManualCalories(Math.max(0, Math.round(estimatedCalories)).toString());
+      const scaledCalories = Math.max(
+        0,
+        Math.round(estimatedCalories * targetPortionMultiplier)
+      );
+      setManualCalories(scaledCalories.toString());
       setShowAiEstimateModal(false);
       setAiEstimateError("");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "AI-arvio epäonnistui.";
-      if (error instanceof Error && error.name === "AbortError") {
-        setAiEstimateError("AI-arvio aikakatkaistiin. Yritä uudelleen.");
-      } else {
-        setAiEstimateError(message);
-      }
+      const message = error instanceof Error ? error.message : "Tuntematon virhe";
+      console.error("[FoodScan] Manual AI estimate failed:", message);
+      setAiEstimateError(getUserFriendlyAiEstimateError(error));
     } finally {
       clearTimeout(timeoutId);
       setIsEstimatingAi(false);
@@ -585,58 +635,28 @@ Saannot:
             />
 
             <Text style={styles.inputLabel}>Annoskerroin</Text>
-            <View style={styles.aiMultiplierRow}>
-              <Pressable
-                style={[
-                  styles.aiMultiplierChip,
-                  aiEstimateMultiplier === 0.5 && styles.aiMultiplierChipActive,
-                ]}
-                onPress={() => setAiEstimateMultiplier(0.5)}
-                disabled={isEstimatingAi}
-              >
-                <Text style={styles.aiMultiplierChipText}>0.5×</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.aiMultiplierChip,
-                  aiEstimateMultiplier === 0.7 && styles.aiMultiplierChipActive,
-                ]}
-                onPress={() => setAiEstimateMultiplier(0.7)}
-                disabled={isEstimatingAi}
-              >
-                <Text style={styles.aiMultiplierChipText}>0.7×</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.aiMultiplierChip,
-                  aiEstimateMultiplier === 1 && styles.aiMultiplierChipActive,
-                ]}
-                onPress={() => setAiEstimateMultiplier(1)}
-                disabled={isEstimatingAi}
-              >
-                <Text style={styles.aiMultiplierChipText}>1.0×</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.aiMultiplierChip,
-                  aiEstimateMultiplier === 1.2 && styles.aiMultiplierChipActive,
-                ]}
-                onPress={() => setAiEstimateMultiplier(1.2)}
-                disabled={isEstimatingAi}
-              >
-                <Text style={styles.aiMultiplierChipText}>1.2×</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.aiMultiplierChip,
-                  aiEstimateMultiplier === 1.4 && styles.aiMultiplierChipActive,
-                ]}
-                onPress={() => setAiEstimateMultiplier(1.4)}
-                disabled={isEstimatingAi}
-              >
-                <Text style={styles.aiMultiplierChipText}>1.4×</Text>
-              </Pressable>
-            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.aiMultiplierRow}
+              contentContainerStyle={styles.aiMultiplierRowContent}
+            >
+              {AI_MULTIPLIER_OPTIONS.map((option) => (
+                <Pressable
+                  key={option.value}
+                  style={[
+                    styles.aiMultiplierChip,
+                    aiEstimateMultiplier === option.value && styles.aiMultiplierChipActive,
+                  ]}
+                  onPress={() => setAiEstimateMultiplier(option.value)}
+                  disabled={isEstimatingAi}
+                >
+                  <Text style={styles.aiMultiplierChipText}>
+                    {option.label} ({option.value.toFixed(1)}×)
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
 
             <Text style={styles.inputLabel}>Lisätiedot (valinnainen)</Text>
             <TextInput
@@ -782,18 +802,21 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   aiMultiplierRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
     marginBottom: 12,
+  },
+  aiMultiplierRowContent: {
+    flexDirection: "row",
+    gap: 8,
+    paddingRight: 4,
   },
   aiMultiplierChip: {
     backgroundColor: "#2a2a2a",
     borderColor: "#3f3f46",
     borderWidth: 1,
-    borderRadius: 999,
+    borderRadius: 16,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 7,
+    alignItems: "center",
   },
   aiMultiplierChipActive: {
     backgroundColor: "#1e3a8a",

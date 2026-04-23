@@ -3,7 +3,7 @@
     "owner": "codevallu2",
     "name": "Ravintoäly",
     "slug": "food-scan-app",
-    "version": "2.7.3",
+    "version": "2.7.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "foodscanapp",
