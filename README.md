@@ -4,7 +4,7 @@ Ravintoäly on Expo/React Native -sovellus, jolla voit skannata tuotteita, analy
 
 ## Ominaisuudet
 
-- OCR-skannaus kameralla (Google Vision API)
+- OCR-skannaus kameralla (Gemini backendin kautta)
 - AI-pohjainen analyysi backendin kautta
 - Päiväkirja kaloreille ja makroille
 - Terveysprofiili (paino, pituus, tavoite, BMI)
@@ -36,7 +36,6 @@ copy .env.example .env
 
 ```env
 EXPO_PUBLIC_BACKEND_URL=https://foodscanbackend.food
-EXPO_PUBLIC_GOOGLE_VISION_API_KEY=your_google_vision_api_key_here
 ```
 
 4. Käynnistä sovellus:

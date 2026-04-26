@@ -27,7 +27,7 @@ import CalendarModal from "./CalendarModal";
 import CalendarView from "./CalendarView";
 import AnalysisModal from "./components/AnalysisModal";
 import ProfileModal from "./components/ProfileModal";
-import { BACKEND_URL, GOOGLE_VISION_API_KEY, STORAGE_KEYS } from "./constants";
+import { BACKEND_URL, STORAGE_KEYS } from "./constants";
 import { useAnalyses } from "./hooks/useAnalyses";
 import { useIngredients } from "./hooks/useIngredients";
 import { useProfile } from "./hooks/useProfile";
@@ -155,6 +155,7 @@ export default function App() {
   const [showCalendarView, setShowCalendarView] = useState(true);
   const [calendarInitialSection, setCalendarInitialSection] =
     useState<"diary" | "calendar">("diary");
+  const [calendarViewRequestId, setCalendarViewRequestId] = useState(0);
   const [calendarViewSlideFrom, setCalendarViewSlideFrom] = useState<"up" | "none">("none");
   const [openedFromSaved, setOpenedFromSaved] = useState(false);
   const [showRecipesView, setShowRecipesView] = useState(false);
@@ -292,6 +293,7 @@ export default function App() {
   const openDiaryView = useCallback(() => {
     setOpenedFromSaved(false);
     setCalendarInitialSection("diary");
+    setCalendarViewRequestId((prev) => prev + 1);
     setCalendarViewSlideFrom("none");
     setShowCalendarView(true);
   }, []);
@@ -299,9 +301,22 @@ export default function App() {
   const openCalendarHistoryView = useCallback(() => {
     setOpenedFromSaved(false);
     setCalendarInitialSection("calendar");
+    setCalendarViewRequestId((prev) => prev + 1);
     setCalendarViewSlideFrom("none");
     setShowCalendarView(true);
   }, []);
+
+  const openCameraView = useCallback(() => {
+    setOpenedFromSaved(false);
+    setOpenedRecipesFromSaved(false);
+    setShowMoreOptions(false);
+    setShowCalendar(false);
+    setShowPreAnalysis(false);
+    setShowCalendarView(false);
+    setShowRecipesView(false);
+    analyses.setShowSaved(false);
+    profile.setShowProfile(false);
+  }, [analyses, profile]);
 
   const toIsoDate = (date: Date) => {
     const y = date.getFullYear();
@@ -1672,107 +1687,29 @@ Säännöt:
         throw new Error("Kuva puuttuu tai base64 muodostus epäonnistui.");
       }
 
-      const hasVisionKey = Boolean(GOOGLE_VISION_API_KEY);
-      console.log(`[FoodScan] Vision key configured: ${hasVisionKey}`);
       console.log(
         `[FoodScan] OCR flow imageBase64 length before request: ${imageBase64.length}`
       );
 
-      let ocrText = "";
-      let visionFailureReason: string | null = null;
-      if (hasVisionKey) {
-        const ocrUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`;
-        try {
-          const ocrResponse = await fetch(ocrUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              requests: [
-                {
-                  image: { content: imageBase64 },
-                  features: [{ type: "TEXT_DETECTION" }],
-                },
-              ],
-            }),
-          });
-
-          if (!ocrResponse.ok) {
-            const responseText = await ocrResponse.text();
-            visionFailureReason = `vision_http_${ocrResponse.status}`;
-            console.warn("[FoodScan] OCR fetch failed, using image fallback:", {
-              url: ocrUrl,
-              status: ocrResponse.status,
-              body: responseText.slice(0, 300),
-            });
-          } else {
-            const ocrData = await ocrResponse.json();
-            ocrText = String(
-              ocrData?.responses?.[0]?.fullTextAnnotation?.text ||
-                ocrData?.responses?.[0]?.textAnnotations?.[0]?.description ||
-                ""
-            ).trim();
-
-            if (!ocrText) {
-              visionFailureReason = "vision_empty_text";
-              console.warn(
-                "[FoodScan] OCR returned empty text, using image fallback for OCR route."
-              );
-            }
-          }
-        } catch (error) {
-          visionFailureReason = "vision_network_error";
-          console.warn("[FoodScan] OCR fetch failed, using image fallback:", {
-            url: ocrUrl,
-            message: getErrorMessage(error),
-          });
-        }
-      } else {
-        console.warn(
-          "[FoodScan] EXPO_PUBLIC_GOOGLE_VISION_API_KEY puuttuu, jatketaan imageBase64-polulla."
-        );
-        visionFailureReason = "vision_key_missing";
-      }
-
-      const shouldUseOcrText = ocrText.length > 0;
-      if (!shouldUseOcrText) {
-        console.log("[FoodScan] OCR text missing, using imageBase64 fallback payload.", {
-          reason: visionFailureReason ?? "unknown",
-        });
-      }
-
       const userMealDescription = options?.mealDescription?.trim();
-      const requestBody: Record<string, unknown> = shouldUseOcrText
-        ? {
-            mode: "ocr",
-            ocrText,
-            sourceRoute: "ocr_capture",
-            ocrProvider: "vision",
-          }
-        : {
-            mode: "ocr",
-            sourceRoute: "ocr_capture",
-            imageBase64,
-            ocrFallbackReason: visionFailureReason ?? "vision_unavailable",
-            mealAdjustments: {
-              portionMultiplier: options?.portionMultiplier ?? 1,
-              oilAdded: options?.oilAdded ?? false,
-              servingContext: options?.servingContext ?? "home",
-              adjustmentPercent: options?.adjustmentPercent ?? 0,
-              ...(userMealDescription ? { mealDescription: userMealDescription } : {}),
-            },
-          };
+      const requestBody: Record<string, unknown> = {
+        mode: "ocr",
+        sourceRoute: "ocr_capture",
+        ocrProvider: "gemini",
+        imageBase64,
+      };
 
       const profileData = profile.getProfileData();
       if (profileData) {
         requestBody.profile = profileData;
       }
 
-      if (!shouldUseOcrText && options) {
+      if (options) {
         requestBody.mealAdjustments = {
-          portionMultiplier: options.portionMultiplier,
-          oilAdded: options.oilAdded,
-          servingContext: options.servingContext,
-          adjustmentPercent: options.adjustmentPercent,
+          portionMultiplier: options.portionMultiplier ?? 1,
+          oilAdded: options.oilAdded ?? false,
+          servingContext: options.servingContext ?? "home",
+          adjustmentPercent: options.adjustmentPercent ?? 0,
           ...(userMealDescription ? { mealDescription: userMealDescription } : {}),
         };
         if (userMealDescription) {
@@ -2292,12 +2229,12 @@ Säännöt:
             }
           >
             <Ionicons
-              name={cameraMode === "ocr" ? "document-text-outline" : "image-outline"}
+              name={cameraMode === "ocr" ? "pricetag-outline" : "restaurant-outline"}
               size={18}
               color="white"
             />
             <Text style={styles.modeToggleText}>
-              {cameraMode === "ocr" ? "OCR" : "AI-kuva"}
+              {cameraMode === "ocr" ? "Tuote" : "Annos"}
             </Text>
           </Pressable>
 
@@ -2334,19 +2271,24 @@ Säännöt:
               }
             }}
           >
-            {cameraMode === "image" && (
-              <View
-                style={[
-                  styles.captureInner,
-                  styles.captureInnerAi,
-                ]}
-              >
-                <Text style={styles.captureLabel}>AI</Text>
-              </View>
-            )}
+            <View
+              style={[
+                styles.captureInner,
+                cameraMode === "image" ? styles.captureInnerAi : styles.captureInnerOcr,
+              ]}
+            >
+              <Text style={styles.captureLabel}>
+                {cameraMode === "image" ? "🍽️" : "📷"}
+              </Text>
+            </View>
           </Pressable>
 
-          <View style={styles.quickNavBar}>
+          <View
+            style={[
+              styles.quickNavBar,
+              { bottom: insets.bottom > 0 ? 12 : 16 },
+            ]}
+          >
             <Pressable
               style={styles.quickNavItem}
               onPress={openDiaryView}
@@ -2740,7 +2682,7 @@ Säännöt:
               <View
                 style={[
                   styles.analysisContainer,
-                  { paddingBottom: Math.max(20, insets.bottom + 14) },
+                  { paddingBottom: Math.max(120, insets.bottom + 104) },
                 ]}
               >
               <View style={styles.savedHeader}>
@@ -3265,7 +3207,12 @@ Säännöt:
                   {showMoreOptions ? "\u25BC Piilota valinnat" : "\u25B6 Lisää vaihtoehtoja"}
                 </Text>
               </Pressable>
-              <View style={styles.savedNavBar}>
+              <View
+                style={[
+                  styles.savedNavBar,
+                  { bottom: insets.bottom > 0 ? 12 : 16 },
+                ]}
+              >
                 <Pressable
                   style={styles.savedNavItem}
                   onPress={() => {
@@ -3283,10 +3230,7 @@ Säännöt:
                 </Pressable>
                 <Pressable
                   style={styles.savedNavItem}
-                  onPress={() => {
-                    analyses.setShowSaved(false);
-                    setShowMoreOptions(false);
-                  }}
+                  onPress={openCameraView}
                 >
                   <Ionicons name="camera-outline" size={20} color="#9ca3af" />
                   <Text style={styles.savedNavLabel}>Kamera</Text>
@@ -3401,7 +3345,7 @@ Säännöt:
           profile.setShowProfile(false);
           openSaved("left");
         }}
-        onOpenCamera={() => profile.setShowProfile(false)}
+        onOpenCamera={openCameraView}
         onOpenCalendar={() => {
           profile.setShowProfile(false);
           openCalendarHistoryView();
@@ -3446,14 +3390,14 @@ Säännöt:
       <CalendarView
         visible={showCalendarView}
         initialSection={calendarInitialSection}
+        openRequestId={calendarViewRequestId}
         slideFrom={calendarViewSlideFrom}
         onOpenAnalyses={() => {
           setShowCalendarView(false);
           openSaved("left");
         }}
         onOpenCamera={() => {
-          setOpenedFromSaved(false);
-          setShowCalendarView(false);
+          openCameraView();
         }}
         onOpenProfile={() => {
           openProfile("right");
@@ -3549,7 +3493,9 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "white",
+    backgroundColor: "transparent",
+    justifyContent: "center",
+    alignItems: "center",
   },
   brandContainer: {
     position: "absolute",
@@ -3561,15 +3507,18 @@ const styles = StyleSheet.create({
     maxWidth: "70%",
   },
   brandLogo: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     marginRight: 10,
   },
   brandText: {
     color: "white",
     fontSize: 24,
+    lineHeight: 28,
+    marginTop: -4,
     fontWeight: "700",
+    includeFontPadding: false,
     textShadowColor: "rgba(0,0,0,0.45)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
@@ -3592,7 +3541,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 12,
     right: 12,
-    bottom: Platform.OS === "ios" ? 18 : 14,
     zIndex: 22,
     borderRadius: 16,
     borderWidth: 1,
@@ -3622,7 +3570,9 @@ const styles = StyleSheet.create({
     color: "#ffffff",
   },
   savedNavBar: {
-    marginTop: 12,
+    position: "absolute",
+    left: 12,
+    right: 12,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "#3f4652",
@@ -3630,6 +3580,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingHorizontal: 6,
     paddingVertical: 8,
+    zIndex: 10,
   },
   savedNavItem: {
     flex: 1,
@@ -4071,25 +4022,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   captureInner: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 3,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
   },
   captureInnerOcr: {
-    borderColor: "#ffffff",
-    backgroundColor: "#ffffff",
+    borderColor: "#9ca3af",
+    backgroundColor: "#374151",
   },
   captureInnerAi: {
-    borderColor: "#4f8ef7",
-    backgroundColor: "#4f8ef7",
+    borderColor: "#7fb0ff",
+    backgroundColor: "#1e3a5f",
   },
   captureLabel: {
-    color: "black",
-    fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 22,
+    lineHeight: 24,
   },
   captureButtonAi: {
     backgroundColor: "transparent",

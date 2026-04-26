@@ -156,7 +156,7 @@ export default function ProfileModal({
             <View
               style={[
                 styles.container,
-                { paddingBottom: Math.max(16, insets.bottom + 10) },
+                { paddingBottom: Math.max(120, insets.bottom + 104) },
               ]}
             >
               <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
@@ -476,7 +476,12 @@ export default function ProfileModal({
                   </Text>
                 </Pressable>
               </View>
-              <View style={styles.profileNavBar}>
+              <View
+                style={[
+                  styles.profileNavBar,
+                  { bottom: insets.bottom > 0 ? 12 : 16 },
+                ]}
+              >
                 <Pressable style={styles.profileNavItem} onPress={onOpenDiary}>
                   <Ionicons name="book-outline" size={20} color="#9ca3af" />
                   <Text style={styles.profileNavLabel}>Päiväkirja</Text>
@@ -702,7 +707,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   profileNavBar: {
-    marginTop: 12,
+    position: "absolute",
+    left: 12,
+    right: 12,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "#3f4652",
@@ -710,6 +717,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingHorizontal: 6,
     paddingVertical: 8,
+    zIndex: 10,
   },
   profileNavItem: {
     flex: 1,

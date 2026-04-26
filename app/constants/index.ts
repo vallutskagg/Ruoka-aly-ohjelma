@@ -2,10 +2,6 @@
 
 const getEnvValue = (value?: string) => (value ?? "").trim();
 
-export const GOOGLE_VISION_API_KEY = getEnvValue(
-  process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY
-);
-
 const DEFAULT_BACKEND_BASE_URL = "https://foodscanbackend.food";
 
 const normalizeBackendUrl = (rawUrl: string) => {

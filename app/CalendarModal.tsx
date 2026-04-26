@@ -1,6 +1,15 @@
 ﻿// app/CalendarModal.tsx
-import React, { useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import { Calendar } from "react-native-calendars";
 import { SavedAnalysis } from "./Storage/Types";
 import { addAnalysisToDate } from "./Storage/calendarStorage";
@@ -46,6 +55,43 @@ export default function CalendarModal({
   const [aiEstimateMultiplier, setAiEstimateMultiplier] = useState<PortionMultiplier>(1);
   const [isEstimatingAi, setIsEstimatingAi] = useState(false);
   const [aiEstimateError, setAiEstimateError] = useState("");
+  const aiMultiplierScrollRef = useRef<ScrollView | null>(null);
+  const hasCenteredAiMultiplierRef = useRef(false);
+  const [aiMultiplierViewportWidth, setAiMultiplierViewportWidth] = useState(0);
+  const [aiMultiplierContentWidth, setAiMultiplierContentWidth] = useState(0);
+  const [normalMultiplierChipLayout, setNormalMultiplierChipLayout] = useState<{
+    x: number;
+    width: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (showAiEstimateModal) {
+      hasCenteredAiMultiplierRef.current = false;
+    }
+  }, [showAiEstimateModal]);
+
+  useEffect(() => {
+    if (!showAiEstimateModal) return;
+    if (hasCenteredAiMultiplierRef.current) return;
+    if (!normalMultiplierChipLayout || aiMultiplierViewportWidth <= 0) return;
+
+    const rawTargetX =
+      normalMultiplierChipLayout.x +
+      normalMultiplierChipLayout.width / 2 -
+      aiMultiplierViewportWidth / 2;
+    const maxOffset = Math.max(aiMultiplierContentWidth - aiMultiplierViewportWidth, 0);
+    const targetX = Math.max(0, Math.min(rawTargetX, maxOffset));
+
+    requestAnimationFrame(() => {
+      aiMultiplierScrollRef.current?.scrollTo({ x: targetX, animated: false });
+    });
+    hasCenteredAiMultiplierRef.current = true;
+  }, [
+    showAiEstimateModal,
+    normalMultiplierChipLayout,
+    aiMultiplierViewportWidth,
+    aiMultiplierContentWidth,
+  ]);
 
   const resetForm = () => {
     setSelectedDate(null);
@@ -144,6 +190,11 @@ export default function CalendarModal({
     return "AI-arvio epäonnistui. Yritä uudelleen.";
   };
 
+  const handleNormalMultiplierChipLayout = (event: LayoutChangeEvent) => {
+    const { x, width } = event.nativeEvent.layout;
+    setNormalMultiplierChipLayout({ x, width });
+  };
+
   const estimateManualCaloriesWithAi = async () => {
     const name = aiEstimateName.trim();
     const details = aiEstimateDetails.trim();
@@ -166,6 +217,8 @@ export default function CalendarModal({
         `Tuote: ${name}`,
         `Valittu annoskerroin: ${targetPortionMultiplier}x`,
         "Arvioi ensin normiannoksen (1.0x) kalorit.",
+        "Tunnista yleiset ruokalajit avainsanoista ja kirjoitusasuista (esim. pizza/pitsa, burger/hampurilainen).",
+        "Jos syote on yleinen ruoka ilman brndia, arvioi realistinen yhden annoksen kalorimaara.",
         ...(details ? [`Lisatiedot: ${details}`] : []),
         "Palauta tarkka tuotteen nimi ja normiannoksen totalCalories.",
       ];
@@ -233,6 +286,17 @@ Palauta vain JSON:
   "totalCalories": number,
   "note": string
 }
+Tunnistusohje:
+- Tunnista myos yleiset ruoan nimet ja synonyymit: pizza/pitsa, hampurilainen/burger, pasta, salaatti, riisi, kana.
+- Jos syote on yleinen ruokalaji ilman tarkkaa tuotebrndia, anna silti realistinen yhden annoksen arvio.
+- Ala pyydä lisaa tietoa, vaan arvioi parhaalla oletuksella.
+Annosohje:
+- Palauta ANNOSKALORIT (ei per 100 g), normiannos 1.0x.
+- Jos grammoja ei ole annettu, kayta tyypillista annoskokoa.
+- Esimerkki: pizza -> kayta tyypillinen yhden palan annos tai pieni ravintola-annos.
+Laatuohje:
+- totalCalories on aina positiivinen luku (>0).
+- note-kenttaan lyhyt perustelu kaytetysta oletuksesta.
 Ei markdownia.
         `.trim(),
         data: {
@@ -291,7 +355,7 @@ Ei markdownia.
             {
               ...requestBodyBase,
               ocrText: strengthenedPromptLines.join("\n"),
-              instructions: `
+                instructions: `
 Arvioi tuotteen ANNOSKALORIT tekstin perusteella.
 Jos tarkat tiedot puuttuvat, kayta realistista yhden annoksen oletusta.
 Palauta normiannoksen (1.0x) kalorit, ala skaalaa muulla annoskertoimella.
@@ -304,8 +368,11 @@ Palauta vain JSON:
 Saannot:
 - totalCalories on positiivinen kokonaisluku (>0)
 - anna paras arvio, vaikka epävarmuutta on
+- tunnista yleiset ruokalajit avainsanoista (esim. pizza/pitsa)
+- jos tietoa puuttuu, kayta tyypillista annoskokoa ja anna silti arvio
+- note-kenttaan lyhyt oletus (esim. annoskoko)
 - ei markdownia
-              `.trim(),
+                `.trim(),
             },
             `Tekstimoodi varmistus (${primaryError instanceof Error ? primaryError.message : "422 low confidence"})`
           );
@@ -636,10 +703,15 @@ Saannot:
 
             <Text style={styles.inputLabel}>Annoskerroin</Text>
             <ScrollView
+              ref={aiMultiplierScrollRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               style={styles.aiMultiplierRow}
               contentContainerStyle={styles.aiMultiplierRowContent}
+              onLayout={(event) =>
+                setAiMultiplierViewportWidth(event.nativeEvent.layout.width)
+              }
+              onContentSizeChange={(width) => setAiMultiplierContentWidth(width)}
             >
               {AI_MULTIPLIER_OPTIONS.map((option) => (
                 <Pressable
@@ -650,6 +722,9 @@ Saannot:
                   ]}
                   onPress={() => setAiEstimateMultiplier(option.value)}
                   disabled={isEstimatingAi}
+                  onLayout={
+                    option.value === 1 ? handleNormalMultiplierChipLayout : undefined
+                  }
                 >
                   <Text style={styles.aiMultiplierChipText}>
                     {option.label} ({option.value.toFixed(1)}×)

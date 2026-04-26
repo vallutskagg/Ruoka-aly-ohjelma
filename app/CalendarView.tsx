@@ -22,6 +22,7 @@ type Props = {
   onOpenProfile?: () => void;
   onOpenCamera?: () => void;
   initialSection?: "diary" | "calendar";
+  openRequestId?: number;
 };
 
 export default function CalendarView({
@@ -33,6 +34,7 @@ export default function CalendarView({
   onOpenProfile,
   onOpenCamera,
   initialSection = "diary",
+  openRequestId = 0,
 }: Props) {
   const insets = useSafeAreaInsets();
   const toIsoDate = (date: Date) => {
@@ -144,7 +146,7 @@ export default function CalendarView({
       closeWeightModal();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initialSection]);
+  }, [visible, initialSection, openRequestId]);
 
   useEffect(() => {
     if (!visible) return;
@@ -1938,7 +1940,7 @@ export default function CalendarView({
               theme={calendarTheme}
             />
             <Pressable
-              style={[styles.copyActionButton, styles.copwyCancelButton]}
+              style={[styles.copyActionButton, styles.copyCancelButton]}
               onPress={() => setShowDatePicker(false)}
             >
               <Text style={styles.copyActionText}>Sulje</Text>
